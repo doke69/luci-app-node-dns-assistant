@@ -1,0 +1,74 @@
+<%+header%>
+<h2>代理节点 DNS 助手</h2>
+<div class="cbi-map-descr">自动读取 PassWall 的服务器域名，手动同步到现有直连加密 DNS。不会修改节点密码、代理端口、默认出口或防火墙规则。</div>
+<div class="cbi-section">
+ <p id="nda-message" role="status" aria-live="polite">正在读取配置…</p>
+ <table class="table"><thead><tr class="tr"><th class="th">节点域名</th><th class="th">独立解析</th></tr></thead><tbody id="nda-list"></tbody></table>
+ <p>使用 IP 地址的节点无需同步。Reality 的 SNI 不属于节点地址，不会加入此列表。</p>
+ <div class="cbi-page-actions">
+  <button type="button" class="cbi-button" id="nda-refresh">检查配置</button>
+  <button type="button" class="cbi-button cbi-button-apply" id="nda-apply">同步节点域名</button>
+  <button type="button" class="cbi-button cbi-button-reset" id="nda-restore">恢复上次备份</button>
+ </div>
+</div>
+<p>支持当前 secure-proxy.json 配置结构。同步会短暂重新加载 MosDNS；预检查失败时不写入配置。只清理插件自己添加的域名。</p>
+<script type="text/javascript">
+(function() {
+ 'use strict';
+ var base='<%=luci.dispatcher.build_url("admin", "services", "node_dns_assistant")%>';
+ var token='<%=token%>';
+ var message=document.getElementById('nda-message');
+ var ids=['nda-refresh','nda-apply','nda-restore'];
+ var canApply=false,canRestore=false;
+ function busy(on) {
+  document.getElementById(ids[0]).disabled=on;
+  document.getElementById(ids[1]).disabled=on||!canApply;
+  document.getElementById(ids[2]).disabled=on||!canRestore;
+ }
+ function request(action,done) {
+  var xhr=new XMLHttpRequest();
+  xhr.open(action==='status'?'GET':'POST',base+'/'+action,true);
+  xhr.timeout=30000;
+  if(action!=='status') xhr.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
+  xhr.onload=function() {
+   try {
+    if(xhr.status!==200) throw new Error('请求失败，请刷新页面重新登录后重试');
+    done(JSON.parse(xhr.responseText));
+   } catch(e) { done({ok:false,message:e.message}); }
+  };
+  xhr.onerror=function(){done({ok:false,message:'连接中断，请重新检查状态，避免重复提交'});};
+  xhr.ontimeout=function(){done({ok:false,message:'等待超时，操作可能仍在执行，请稍后检查状态'});};
+  xhr.send(action==='status'?null:'token='+encodeURIComponent(token));
+ }
+ function refresh(preserve) {
+  busy(true);
+  request('status',function(data) {
+   canApply=!!data.ok;canRestore=!!data.ok&&!!data.backup;
+   if(!preserve) message.textContent=data.message||'无法读取配置';
+   var body=document.getElementById('nda-list');
+   while(body.firstChild) body.removeChild(body.firstChild);
+   (data.nodes||[]).forEach(function(node) {
+    var row=document.createElement('tr');row.className='tr';
+    [node.domain,node.synced?'已配置':'待同步'].forEach(function(value) {
+     var cell=document.createElement('td');cell.className='td';cell.textContent=value;row.appendChild(cell);
+    });
+    body.appendChild(row);
+   });
+   if(data.ok&&!data.nodes.length) {
+    var row=document.createElement('tr'),cell=document.createElement('td');
+    cell.colSpan=2;cell.textContent='没有需要同步的域名节点';row.appendChild(cell);body.appendChild(row);
+   }
+   busy(false);
+  });
+ }
+ function change(action) {
+  busy(true);message.textContent='正在校验并处理，请稍候…';
+  request(action,function(data) {message.textContent=data.message||'操作失败';refresh(true);});
+ }
+ document.getElementById(ids[0]).onclick=function(){refresh(false);};
+ document.getElementById(ids[1]).onclick=function(){change('apply');};
+ document.getElementById(ids[2]).onclick=function(){change('restore');};
+ refresh(false);
+})();
+</script>
+<%+footer%>
